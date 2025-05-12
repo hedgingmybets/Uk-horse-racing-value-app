@@ -1,52 +1,97 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import requests
+import time
 from datetime import date
 
-st.set_page_config(page_title="UK Horse Racing Value Bets", layout="wide")
-st.title("UK Horse Racing Value Betting Dashboard")
+st.set_page_config(page_title="Horse Racing Value Bets", layout="centered")
+st.title("UK Horse Racing Value Betting App")
 
-# Retrieve credentials securely from secrets
-username = st.secrets["racing_api"]["username"]
-password = st.secrets["racing_api"]["password"]
-auth = (username, password)
+# --- Select race type ---
+race_type = st.sidebar.selectbox("Race Type", ["Flat", "Jumps"]).lower()
+today = date.today().isoformat()
 
-# Input: Select race type
-race_type = st.sidebar.selectbox("Race Type", ["flat", "jumps"])
-race_date = st.sidebar.date_input("Race Date", date.today())
+# --- API Auth ---
+try:
+    username = st.secrets["racing_api"]["username"]
+    password = st.secrets["racing_api"]["password"]
+except KeyError:
+    st.error("API credentials not found. Please configure them in Streamlit secrets.")
+    st.stop()
 
-# Fetch race data
-@st.cache_data(ttl=600)
-def fetch_race_data(race_type, race_date):
-    base_url = "https://theracingapi.com/api/races"
-    params = {"date": race_date.strftime("%Y-%m-%d"), "country": "GB", "type": race_type}
+# --- API Token ---
+@st.cache_data(ttl=3600)
+def get_token():
     try:
-        response = requests.get(base_url, auth=auth, params=params, timeout=10)
-        response.raise_for_status()
-        return response.json().get("data", [])
-    except requests.exceptions.RequestException as e:
-        st.error(f"API request failed: {e}")
-        return []
+        r = requests.post(
+            "https://theracingapi.com/api/token",
+            json={"username": username, "password": password},
+            timeout=10
+        )
+        r.raise_for_status()
+        return r.json()["token"]
+    except Exception as e:
+        return None
 
-races = fetch_race_data(race_type, race_date)
+# --- Fetch race data ---
+def fetch_races(race_type):
+    token = get_token()
+    if not token:
+        return None, "Could not authenticate with the racing API."
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"https://theracingapi.com/api/races?date={today}&country=GB&type={race_type}"
+    
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        return r.json(), None
+    except requests.exceptions.RequestException:
+        return None, "API service currently unavailable or timed out."
 
-if not races:
-    st.warning("No race data available.")
+# --- Fetch odds (mock) ---
+def generate_mock_odds(runners):
+    odds = {}
+    for r in runners:
+        odds[r["name"]] = np.round(np.random.uniform(2.5, 21), 2)
+    return odds
+
+# --- Calculate value ---
+def compute_value_bets(race):
+    runners = race["runners"]
+    odds = generate_mock_odds(runners)
+    total_prob = sum([1 / o for o in odds.values()])
+    
+    data = []
+    for runner in runners:
+        name = runner["name"]
+        price = odds[name]
+        fair_prob = 1 / price
+        adjusted_prob = fair_prob / total_prob
+        ev = round(price * adjusted_prob - 1, 3)
+        ew_ev = round((price / 5 * adjusted_prob) - 0.5, 3)
+        data.append({
+            "Horse": name,
+            "Odds": price,
+            "Adj. Prob": round(adjusted_prob, 3),
+            "EV": ev,
+            "EW EV": ew_ev,
+        })
+    df = pd.DataFrame(data).sort_values("EV", ascending=False)
+    return df
+
+# --- Main Execution ---
+st.subheader(f"UK {race_type.capitalize()} Races on {today}")
+
+races_data, error = fetch_races(race_type)
+if error:
+    st.warning(error)
+elif not races_data:
+    st.info("No races found for today.")
 else:
-    for race in races:
-        st.subheader(f"{race['course_name']} - {race['race_time']} ({race_type.title()})")
-        if 'runners' not in race or not race['runners']:
-            st.write("No runner data available.")
-            continue
-
-        race_data = []
-        for runner in race["runners"]:
-            name = runner.get("name", "N/A")
-            odds = float(runner.get("odds_decimal", 0))
-            win_prob = round(1 / odds, 3) if odds > 0 else 0
-            ev = round((win_prob * odds) - 1, 3)
-            race_data.append({"Horse": name, "Odds": odds, "Win Probability": win_prob, "Expected Value": ev})
-
-        df = pd.DataFrame(race_data)
-        df = df.sort_values(by="Expected Value", ascending=False).reset_index(drop=True)
-        st.dataframe(df)
+    for race in races_data[:5]:  # Limit to 5 for API efficiency
+        st.markdown(f"### {race['track']} â {race['time']}")
+        df = compute_value_bets(race)
+        st.dataframe(df, use_container_width=True)
+        time.sleep(0.6)  # Rate limit: 2 req/sec max
