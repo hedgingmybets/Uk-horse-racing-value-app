@@ -20,7 +20,7 @@ except KeyError:
     st.error("API credentials not found. Please configure them in Streamlit secrets.")
     st.stop()
 
-# --- API Token ---
+# --- API Token with debug ---
 @st.cache_data(ttl=3600)
 def get_token():
     try:
@@ -29,10 +29,12 @@ def get_token():
             json={"username": username, "password": password},
             timeout=10
         )
+        st.write("Status Code:", r.status_code)
+        st.write("Response Text:", r.text)
         r.raise_for_status()
         return r.json()["token"]
     except Exception as e:
-        st.error("API authentication failed.")
+        st.error(f"API authentication failed: {e}")
         return None
 
 # --- Fetch race data ---
@@ -51,14 +53,14 @@ def fetch_races(race_type):
     except requests.exceptions.RequestException:
         return None, "API service currently unavailable or timed out."
 
-# --- Fetch odds (mock) ---
+# --- Mock odds generator ---
 def generate_mock_odds(runners):
     odds = {}
     for r in runners:
         odds[r["name"]] = np.round(np.random.uniform(2.5, 21), 2)
     return odds
 
-# --- Calculate value ---
+# --- Value bet calculator ---
 def compute_value_bets(race):
     runners = race["runners"]
     odds = generate_mock_odds(runners)
@@ -82,7 +84,7 @@ def compute_value_bets(race):
     df = pd.DataFrame(data).sort_values("EV", ascending=False)
     return df
 
-# --- Main Execution ---
+# --- Display section ---
 st.subheader(f"UK {race_type.capitalize()} Races on {today}")
 
 races_data, error = fetch_races(race_type)
@@ -92,7 +94,7 @@ elif not races_data:
     st.info("No races found for today.")
 else:
     for race in races_data[:5]:  # Limit to 5 for API efficiency
-        st.markdown(f"### {race['track']} â {race['time']}")
+        st.markdown(f"### {race['track']} — {race['time']}")
         df = compute_value_bets(race)
         st.dataframe(df, use_container_width=True)
         time.sleep(0.6)  # Rate limit: 2 req/sec max
