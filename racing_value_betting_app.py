@@ -32,6 +32,7 @@ def get_token():
         r.raise_for_status()
         return r.json()["token"]
     except Exception as e:
+        st.error("API authentication failed.")
         return None
 
 # --- Fetch race data ---
