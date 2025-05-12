@@ -12,8 +12,8 @@ country = "GB"
 
 # --- API Keys from Streamlit secrets ---
 try:
-    odds_api_key = st.secrets["oddsapi"]["key"]
-    sportsdb_key = st.secrets["sportsdb"]["key"]
+    odds_api_key = st.secrets["theoddsapi"]["api_key"]
+    sportsdb_key = st.secrets["thesportsdb"]["api_key"]
 except KeyError:
     st.error("API keys not configured. Add them via Streamlit secrets.")
     st.stop()
@@ -26,7 +26,7 @@ def fetch_races():
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         data = r.json().get("events", [])
-        races = [{"track": e["strEvent"], "time": e["dateEvent"]} for e in data if e["strCountry"] == country]
+        races = [{"track": e["strEvent"], "time": e["dateEvent"]} for e in data if e.get("strCountry") == country]
         return races
     except Exception:
         return []
