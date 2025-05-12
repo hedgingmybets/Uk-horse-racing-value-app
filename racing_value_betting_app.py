@@ -20,24 +20,30 @@ except KeyError:
     st.error("API credentials not found. Please configure them in Streamlit secrets.")
     st.stop()
 
-# --- API Token with extended timeout ---
+# --- API Token with retry ---
 @st.cache_data(ttl=3600)
-def get_token():
-    try:
-        r = requests.post(
-            "https://theracingapi.com/api/token",
-            json={"username": username, "password": password},
-            timeout=20  # extended timeout
-        )
-        r.raise_for_status()
-        return r.json()["token"]
-    except requests.exceptions.RequestException as e:
-        st.error(f"API authentication failed: {e}")
-        return None
+def get_token_with_retry(max_retries=5, base_delay=2):
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                "https://theracingapi.com/api/token",
+                json={"username": username, "password": password},
+                timeout=20
+            )
+            response.raise_for_status()
+            return response.json()["token"]
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                st.warning(f"Retrying API authentication in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                st.error(f"API authentication failed after {max_retries} attempts: {e}")
+                return None
 
 # --- Fetch race data ---
 def fetch_races(race_type):
-    token = get_token()
+    token = get_token_with_retry()
     if not token:
         return None, "Could not authenticate with the racing API."
 
@@ -51,14 +57,14 @@ def fetch_races(race_type):
     except requests.exceptions.RequestException:
         return None, "API service currently unavailable or timed out."
 
-# --- Generate mock odds ---
+# --- Mock Odds ---
 def generate_mock_odds(runners):
     odds = {}
     for r in runners:
         odds[r["name"]] = np.round(np.random.uniform(2.5, 21), 2)
     return odds
 
-# --- Calculate value bets ---
+# --- Compute Value Bets ---
 def compute_value_bets(race):
     runners = race["runners"]
     odds = generate_mock_odds(runners)
@@ -82,7 +88,7 @@ def compute_value_bets(race):
     df = pd.DataFrame(data).sort_values("EV", ascending=False)
     return df
 
-# --- Main Execution ---
+# --- Main App Logic ---
 st.subheader(f"UK {race_type.capitalize()} Races on {today}")
 
 races_data, error = fetch_races(race_type)
@@ -91,8 +97,8 @@ if error:
 elif not races_data:
     st.info("No races found for today.")
 else:
-    for race in races_data[:5]:  # Limit to 5 for API efficiency
+    for race in races_data[:5]:
         st.markdown(f"### {race['track']} â {race['time']}")
         df = compute_value_bets(race)
         st.dataframe(df, use_container_width=True)
-        time.sleep(0.6)  # Rate limit: 2 req/sec max
+        time.sleep(0.6)
