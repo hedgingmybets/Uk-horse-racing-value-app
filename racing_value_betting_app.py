@@ -24,7 +24,7 @@ params = {
 }
 
 try:
-    response = requests.get(url, headers=HEADERS, params=params, timeout=10)
+    response = requests.get(url, headers=HEADERS, params=params, timeout=20)
     if response.status_code == 200:
         races = response.json()
         if races:
