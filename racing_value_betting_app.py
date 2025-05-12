@@ -1,5 +1,20 @@
 import streamlit as st
 import requests
+import time
+import random
+
+def get_with_retries(url, headers=None, params=None, retries=3, timeout=20):
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, headers=headers, params=params, timeout=timeout)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as e:
+            if attempt < retries - 1:
+                wait = 2 ** attempt + random.uniform(0, 1)
+                time.sleep(wait)
+            else:
+                raise e
 import pandas as pd
 from datetime import datetime
 import numpy as np
