@@ -1,88 +1,53 @@
 import streamlit as st
 import requests
 import time
-import random
-
-def get_with_retries(url, headers=None, params=None, retries=3, timeout=20):
-    for attempt in range(retries):
-        try:
-            response = requests.get(url, headers=headers, params=params, timeout=timeout)
-            response.raise_for_status()
-            return response
-        except requests.RequestException as e:
-            if attempt < retries - 1:
-                wait = 2 ** attempt + random.uniform(0, 1)
-                time.sleep(wait)
-            else:
-                raise e
 import pandas as pd
-from datetime import datetime
-import numpy as np
+from datetime import date
 
-st.set_page_config(page_title="UK Horse Racing Value Bets", layout="wide")
-st.title("UK Horse Racing Value Betting Dashboard with Each-Way")
+st.set_page_config(page_title="Horse Racing Value Betting", layout="wide")
+st.title("UK Horse Racing — Value Betting App")
 
-# Race type selector (must come before using race_type)
-race_type = st.sidebar.radio("Race Type", ["flat", "jumps"])
-st.subheader(f"Fetching today’s UK {race_type} races...")
+API_KEY = st.secrets["racing_api_key"]
+BASE_URL = "https://theracingapi.com/api"
 
-# API token (stored securely via Streamlit secrets)
-TOKEN = st.secrets.get("racing_api_token", "YOUR_API_TOKEN")
-HEADERS = {"Authorization": f"Bearer {TOKEN}"}
+def rate_limited_request(url, headers=None, params=None, delay=0.6):
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        time.sleep(delay)
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Request failed: {e}")
+        return None
 
-# Base API URL
-url = "https://theracingapi.com/api/races"
-params = {
-    "date": datetime.today().strftime("%Y-%m-%d"),
-    "country": "GB",
-    "type": race_type
-}
+# Select race type and date
+race_type = st.sidebar.selectbox("Race Type", ["flat", "jumps"])
+race_date = st.sidebar.date_input("Race Date", value=date.today())
 
-try:
-    response = requests.get(url, headers=HEADERS, params=params, timeout=20)
-    if response.status_code == 200:
-        races = response.json()
-        if races:
-            st.success(f"Found {len(races)} races.")
-            race_df = pd.DataFrame(races)
+# Fetch races
+params = {"date": race_date.strftime("%Y-%m-%d"), "country": "GB", "type": race_type}
+headers = {"Authorization": f"Bearer {API_KEY}"}
+data = rate_limited_request(f"{BASE_URL}/races", headers=headers, params=params)
 
-            all_bets = []
-            for _, row in race_df.iterrows():
-                st.markdown(f"### {row['race_time']} — {row['track']} ({row['distance']}m)")
-
-                runners = row.get("runners", [])
-                if not runners:
-                    st.write("No runner data available.")
-                    continue
-
-                table = []
-                for runner in runners:
-                    win_prob = runner.get("win_probability", 0)
-                    ew_prob = runner.get("place_probability", 0)
-                    win_odds = runner.get("win_odds", 0)
-                    ew_odds = runner.get("place_odds", 0)
-
-                    ev_win = round((win_prob * win_odds) - 1, 2)
-                    ev_ew = round((ew_prob * ew_odds) - 1, 2)
-
-                    best = "Win" if ev_win > ev_ew else "E/W"
-                    if max(ev_win, ev_ew) < 0:
-                        best = "No value"
-
-                    table.append({
-                        "Horse": runner["horse"],
-                        "Win Odds": win_odds,
-                        "E/W Odds": ew_odds,
-                        "Win EV": ev_win,
-                        "E/W EV": ev_ew,
-                        "Best Bet": best
-                    })
-
-                df = pd.DataFrame(table)
-                st.dataframe(df)
+if data and "races" in data:
+    for race in data["races"]:
+        st.subheader(f"{race['racecourse']} — {race['time']} — {race['name']}")
+        
+        # Fetch runners for the race
+        race_id = race["id"]
+        runners = rate_limited_request(f"{BASE_URL}/races/{race_id}/runners", headers=headers)
+        
+        if runners and "runners" in runners:
+            df = pd.DataFrame(runners["runners"])
+            if not df.empty:
+                df["Each Way Terms"] = "1/5 3 places"  # Placeholder logic
+                df["Bookmaker Odds"] = df.get("odds", 5.0)  # Placeholder odds
+                df["Model Win Prob"] = 1 / df["Bookmaker Odds"]
+                df["Value Bet"] = (df["Model Win Prob"] * df["Bookmaker Odds"]) > 1.05
+                st.dataframe(df[["name", "Bookmaker Odds", "Model Win Prob", "Each Way Terms", "Value Bet"]])
+            else:
+                st.write("No runner data available.")
         else:
-            st.warning("No races found for today.")
-    else:
-        st.error(f"Failed to fetch data. Status code: {response.status_code}")
-except requests.exceptions.RequestException as e:
-    st.error(f"Request failed: {e}")
+            st.write("No runners found.")
+else:
+    st.warning("No race data found or API request failed.")
