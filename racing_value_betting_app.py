@@ -1,32 +1,67 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
 import requests
 from datetime import datetime
+import pandas as pd
 
-st.set_page_config(page_title="Horse Racing Value Betting", layout="wide")
-st.title("UK Horse Racing Value Betting (Prototype)")
+st.set_page_config(page_title="UK Horse Racing Value Bets", layout="centered")
+st.title("UK Horse Racing — Value Betting Dashboard")
 
-st.markdown("This prototype estimates value in UK races using simulated probabilities and bookmaker odds.")
+# Load credentials from Streamlit secrets
+username = st.secrets["racing_api"]["username"]
+password = st.secrets["racing_api"]["password"]
 
-# Simulate some upcoming races
-races = [
-    {"race": "Kempton 14:30", "runner": "Speed Flyer", "odds": 3.5, "win_prob": 0.32, "place_prob": 0.65},
-    {"race": "Kempton 14:30", "runner": "Bold Spirit", "odds": 5.0, "win_prob": 0.20, "place_prob": 0.45},
-    {"race": "Kempton 14:30", "runner": "Golden Arrow", "odds": 7.0, "win_prob": 0.14, "place_prob": 0.35},
-    {"race": "Chepstow 15:10", "runner": "Misty River", "odds": 4.0, "win_prob": 0.28, "place_prob": 0.6},
-    {"race": "Chepstow 15:10", "runner": "Ocean Gale", "odds": 6.5, "win_prob": 0.18, "place_prob": 0.42},
-    {"race": "Chepstow 15:10", "runner": "Captain Jack", "odds": 8.0, "win_prob": 0.12, "place_prob": 0.3}
-]
+# Authenticate and fetch token
+auth_url = "https://theracingapi.com/api/token"
+auth_data = {
+    "username": username,
+    "password": password
+}
+auth_res = requests.post(auth_url, json=auth_data)
+if auth_res.status_code != 200:
+    st.error("Authentication failed. Check your credentials.")
+    st.stop()
 
-df = pd.DataFrame(races)
-df["EV Win"] = (df["win_prob"] * df["odds"]) - 1
-df["EV Place"] = (df["place_prob"] * (df["odds"] / 3)) - 1
-df["Best Bet Type"] = np.where(df["EV Win"] > df["EV Place"], "Win", "Place")
-df["Best EV"] = df[["EV Win", "EV Place"]].max(axis=1)
+token = auth_res.json().get("token")
+headers = {"Authorization": f"Bearer {token}"}
 
-race_selected = st.selectbox("Select a Race", df["race"].unique())
-filtered = df[df["race"] == race_selected]
+# Fetch today’s UK races
+races_url = "https://theracingapi.com/api/racecards"
+params = {
+    "date": datetime.today().strftime("%Y-%m-%d"),
+    "country": "GB",
+    "type": "all"
+}
+response = requests.get(races_url, headers=headers, params=params)
 
-st.write(f"### Runners in {race_selected}")
-st.dataframe(filtered[["runner", "odds", "win_prob", "place_prob", "EV Win", "EV Place", "Best Bet Type", "Best EV"]])
+if response.status_code != 200:
+    st.error("Failed to fetch race data.")
+    st.stop()
+
+races = response.json().get("data", [])
+if not races:
+    st.info("No UK races available today.")
+    st.stop()
+
+# Display available races
+for meeting in races:
+    st.subheader(meeting["course"])
+    for race in meeting.get("races", []):
+        st.markdown(f"**Race Time:** {race['time']} — **Race Type:** {race['race_type']}")
+        horses = race.get("horses", [])
+        data = []
+        for h in horses:
+            if "odds_decimal" in h and h["odds_decimal"]:
+                win_odds = float(h["odds_decimal"])
+                implied_prob = round(1 / win_odds, 3)
+                value = round((implied_prob * win_odds) - 1, 3)
+                data.append({
+                    "Horse": h["name"],
+                    "Odds": win_odds,
+                    "Implied %": f"{implied_prob*100:.1f}%",
+                    "Value": value
+                })
+        if data:
+            df = pd.DataFrame(data)
+            df = df.sort_values(by="Value", ascending=False)
+            st.dataframe(df)
+        st.markdown("---")
