@@ -20,20 +20,18 @@ except KeyError:
     st.error("API credentials not found. Please configure them in Streamlit secrets.")
     st.stop()
 
-# --- API Token with debug ---
+# --- API Token with extended timeout ---
 @st.cache_data(ttl=3600)
 def get_token():
     try:
         r = requests.post(
             "https://theracingapi.com/api/token",
             json={"username": username, "password": password},
-            timeout=10
+            timeout=20  # extended timeout
         )
-        st.write("Status Code:", r.status_code)
-        st.write("Response Text:", r.text)
         r.raise_for_status()
         return r.json()["token"]
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         st.error(f"API authentication failed: {e}")
         return None
 
@@ -42,30 +40,30 @@ def fetch_races(race_type):
     token = get_token()
     if not token:
         return None, "Could not authenticate with the racing API."
-    
+
     headers = {"Authorization": f"Bearer {token}"}
     url = f"https://theracingapi.com/api/races?date={today}&country=GB&type={race_type}"
-    
+
     try:
-        r = requests.get(url, headers=headers, timeout=10)
+        r = requests.get(url, headers=headers, timeout=20)
         r.raise_for_status()
         return r.json(), None
     except requests.exceptions.RequestException:
         return None, "API service currently unavailable or timed out."
 
-# --- Mock odds generator ---
+# --- Generate mock odds ---
 def generate_mock_odds(runners):
     odds = {}
     for r in runners:
         odds[r["name"]] = np.round(np.random.uniform(2.5, 21), 2)
     return odds
 
-# --- Value bet calculator ---
+# --- Calculate value bets ---
 def compute_value_bets(race):
     runners = race["runners"]
     odds = generate_mock_odds(runners)
     total_prob = sum([1 / o for o in odds.values()])
-    
+
     data = []
     for runner in runners:
         name = runner["name"]
@@ -84,7 +82,7 @@ def compute_value_bets(race):
     df = pd.DataFrame(data).sort_values("EV", ascending=False)
     return df
 
-# --- Display section ---
+# --- Main Execution ---
 st.subheader(f"UK {race_type.capitalize()} Races on {today}")
 
 races_data, error = fetch_races(race_type)
@@ -94,7 +92,7 @@ elif not races_data:
     st.info("No races found for today.")
 else:
     for race in races_data[:5]:  # Limit to 5 for API efficiency
-        st.markdown(f"### {race['track']} — {race['time']}")
+        st.markdown(f"### {race['track']} â {race['time']}")
         df = compute_value_bets(race)
         st.dataframe(df, use_container_width=True)
         time.sleep(0.6)  # Rate limit: 2 req/sec max
